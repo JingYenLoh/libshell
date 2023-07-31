@@ -3,8 +3,8 @@ use winnow::{
     combinator::{alt, fail, peek, repeat, success},
     dispatch,
     prelude::*,
-    stream::Stream,
-    token::tag,
+    stream::{Stream, AsChar},
+    token::{tag, take_while, take_till0, take_till1},
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -51,8 +51,8 @@ fn program(input: &mut &str) -> PResult<Program> {
 }
 
 fn command_name(input: &mut &str) -> PResult<SimpleCommand> {
-    let name = alphanumeric0(input)?;
-    let args: Vec<String> = repeat(0.., word).parse_next(input)?;
+    let name = word(input)?;
+    let args: Vec<String> = repeat(0.., word).parse_next(input).unwrap_or(vec![]);
     Ok(SimpleCommand {
         name: name.to_string(),
         args,
@@ -61,7 +61,16 @@ fn command_name(input: &mut &str) -> PResult<SimpleCommand> {
 
 /// TODO: Follow spec for WORD
 fn word(input: &mut &str) -> PResult<String> {
-    alphanumeric0(input).map(|s| s.to_string())
+    // EOS
+    if input.is_empty() {
+        return fail(input);
+    }
+    // eat all spaces
+    take_while(0.., AsChar::is_space).parse_next(input)?;
+    take_till1(|c| {
+        c == ' ' || c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == '<'
+            || c == '>' || c == '|' || c == '&' || c == ';' || c == '\n'
+    }).parse_next(input).map(|s| s.to_string())
 }
 
 fn and_if(input: &mut &str) -> PResult<Operator> {
@@ -213,6 +222,20 @@ mod tests {
     }
 
     #[test]
+    fn it_parses_simple_command_nonalphanumeric() {
+        let input = "xdg-open";
+        let mut input = &input[..];
+        let result = command_name(&mut input);
+        assert_eq!(
+            result,
+            Ok(SimpleCommand {
+                name: "xdg-open".to_string(),
+                args: vec![],
+            })
+        );
+    }
+
+    #[test]
     fn it_parses_simple_command() {
         let input = "ls";
         let mut input = &input[..];
@@ -227,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn it_parses_simple_command_with_args() {
+    fn it_parses_simple_command_args() {
         let input = "ls -l";
         let mut input = &input[..];
         let result = command_name(&mut input);
@@ -239,4 +262,34 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn it_parses_simple_command_with_trailing_whitespace() {
+        let input = "ls        ";
+        let mut input = &input[..];
+        let result = command_name(&mut input);
+        assert_eq!(
+            result,
+            Ok(SimpleCommand {
+                name: "ls".to_string(),
+                args: vec![],
+            })
+        );
+    }
+
+
+    #[test]
+    fn it_parses_simple_command_args_with_trailing_whitespace() {
+        let input = "ls        -la           ";
+        let mut input = &input[..];
+        let result = command_name(&mut input);
+        assert_eq!(
+            result,
+            Ok(SimpleCommand {
+                name: "ls".to_string(),
+                args: vec!["-la".to_string()],
+            })
+        );
+    }
+
 }
