@@ -1,8 +1,35 @@
 use winnow::{
-    ascii::{alphanumeric0, newline, space0},
-    combinator::{repeat, terminated},
+    ascii::alphanumeric0,
+    combinator::{alt, fail, peek, repeat, success},
+    dispatch,
     prelude::*,
+    stream::Stream,
+    token::tag,
 };
+
+#[derive(Debug, PartialEq, Clone)]
+enum Operator {
+    // &&
+    AndIf,
+    // ||
+    OrIf,
+    // ;;
+    DSemi,
+    // <<
+    DLess,
+    // >>
+    DGreat,
+    // <&
+    LessAnd,
+    // >&
+    GreatAnd,
+    // <>
+    LessGreat,
+    // <<-
+    DLessDash,
+    // >|
+    Clobber,
+}
 
 /// simple_command: cmd_prefix cmd_word cmd_suffix (TODO)
 ///               | cmd_prefix cmd_word (TODO)
@@ -19,11 +46,11 @@ pub struct Program {
     pub commands: Vec<SimpleCommand>,
 }
 
-pub fn program(input: &mut &str) -> PResult<Program> {
+fn program(input: &mut &str) -> PResult<Program> {
     todo!("Implement program parser")
 }
 
-pub fn command_name(input: &mut &str) -> PResult<SimpleCommand> {
+fn command_name(input: &mut &str) -> PResult<SimpleCommand> {
     let name = alphanumeric0(input)?;
     let args: Vec<String> = repeat(0.., word).parse_next(input)?;
     Ok(SimpleCommand {
@@ -33,14 +60,149 @@ pub fn command_name(input: &mut &str) -> PResult<SimpleCommand> {
 }
 
 /// TODO: Follow spec for WORD
-pub fn word(input: &mut &str) -> PResult<String> {
-    space0.parse_next(input)?;
+fn word(input: &mut &str) -> PResult<String> {
     alphanumeric0(input).map(|s| s.to_string())
+}
+
+fn and_if(input: &mut &str) -> PResult<Operator> {
+    tag("&&").parse_next(input).map(|_| Operator::AndIf)
+}
+
+fn or_if(input: &mut &str) -> PResult<Operator> {
+    tag("||").parse_next(input).map(|_| Operator::OrIf)
+}
+
+fn d_semi(input: &mut &str) -> PResult<Operator> {
+    tag(";;").parse_next(input).map(|_| Operator::DSemi)
+}
+
+fn d_less(input: &mut &str) -> PResult<Operator> {
+    tag("<<").parse_next(input).map(|_| Operator::DLess)
+}
+
+fn d_great(input: &mut &str) -> PResult<Operator> {
+    tag(">>").parse_next(input).map(|_| Operator::DGreat)
+}
+
+fn less_and(input: &mut &str) -> PResult<Operator> {
+    tag("<&").parse_next(input).map(|_| Operator::LessAnd)
+}
+
+fn great_and(input: &mut &str) -> PResult<Operator> {
+    tag(">&").parse_next(input).map(|_| Operator::GreatAnd)
+}
+
+fn less_great(input: &mut &str) -> PResult<Operator> {
+    tag("<>").parse_next(input).map(|_| Operator::LessGreat)
+}
+
+fn d_less_dash(input: &mut &str) -> PResult<Operator> {
+    tag("<<-").parse_next(input).map(|_| Operator::DLessDash)
+}
+
+fn clobber(input: &mut &str) -> PResult<Operator> {
+    tag(">|").parse_next(input).map(|_| Operator::Clobber)
+}
+
+fn operator(input: &mut &str) -> PResult<Operator> {
+    alt((
+        d_less_dash,
+        and_if,
+        or_if,
+        d_semi,
+        d_less,
+        d_great,
+        less_and,
+        great_and,
+        less_great,
+        clobber,
+    ))
+    .parse_next(input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn it_parses_operator_and() {
+        let input = "&&";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::AndIf));
+    }
+
+    #[test]
+    fn it_parses_operator_or() {
+        let input = "||";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::OrIf));
+    }
+
+    #[test]
+    fn it_parses_operator_d_semi() {
+        let input = ";;";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::DSemi));
+    }
+
+    #[test]
+    fn it_parses_operator_d_less() {
+        let input = "<<";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::DLess));
+    }
+
+    #[test]
+    fn it_parses_operator_d_great() {
+        let input = ">>";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::DGreat));
+    }
+
+    #[test]
+    fn it_parses_operator_less_and() {
+        let input = "<&";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::LessAnd));
+    }
+
+    #[test]
+    fn it_parses_operator_great_and() {
+        let input = ">&";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::GreatAnd));
+    }
+
+    #[test]
+    fn it_parses_operator_less_great() {
+        let input = "<>";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::LessGreat));
+    }
+
+    #[test]
+    fn it_parses_operator_d_less_dash() {
+        let input = "<<-";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::DLessDash));
+    }
+
+    #[test]
+    fn it_parses_operator_clobber() {
+        let input = ">|";
+        let mut input = &input[..];
+        let result = operator(&mut input);
+        assert_eq!(result, Ok(Operator::Clobber));
+    }
 
     #[test]
     fn it_parses_word() {
